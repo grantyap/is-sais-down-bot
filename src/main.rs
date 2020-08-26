@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serenity::{
     async_trait,
     framework::standard::{
+        CommandError,
         macros::{command, group},
         StandardFramework,
     },
@@ -159,10 +160,7 @@ struct General;
 async fn sais(
     ctx: &Context,
     msg: &Message,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // TODO: Access SaisClient and do the stuff we need to do
-    //       to check if SAIS is up.
-
+) -> Result<(), CommandError> {
     println!("Checking SAIS at '{}'", UP_SAIS_LOGIN_URL);
 
     let mut data = ctx.data.write().await;
