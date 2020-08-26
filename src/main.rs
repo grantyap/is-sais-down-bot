@@ -15,6 +15,8 @@ use serenity::{
 use std::{env, sync::Arc, time::Duration};
 
 const UP_SAIS_LOGIN_URL: &str = "https://sais.up.edu.ph/psp/ps/?cmd=login&languageCd=ENG";
+const UP_CEBU_DISCORD_SERVER_ID: u64 = 746697859818061844;
+const LOGIN_SUCCESS_TEST_STRING: &str = "<title>Employee-facing registry content</title>";
 
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
@@ -94,9 +96,11 @@ impl SaisClient {
         match response {
             Ok(result) => {
                 let result_text = result.text().await.expect("Could not get response text");
-                if result_text.contains("Employee-facing registry content") {
+                if result_text.contains(LOGIN_SUCCESS_TEST_STRING) {
+                    println!("Found {:?} in response body.\nLogin success", LOGIN_SUCCESS_TEST_STRING);
                     Ok(true)
                 } else {
+                    println!("Could not find {:?} in response body", LOGIN_SUCCESS_TEST_STRING);
                     Ok(false)
                 }
             }
@@ -139,7 +143,8 @@ async fn main() {
 
     let framework = StandardFramework::new()
         .configure(|c| c.with_whitespace(true).prefix("&"))
-        .bucket("sais", |b| b.delay(5)).await
+        .bucket("sais", |b| b.delay(5))
+        .await
         .group(&GENERAL_GROUP);
 
     // Create a new instance of the Client, logging in as a bot. This will
@@ -190,7 +195,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
 
     let emojis = &ctx
         .http
-        .get_guild(746697859818061844)
+        .get_guild(UP_CEBU_DISCORD_SERVER_ID)
         .await
         .expect("Could not get guild")
         .emojis;
@@ -203,21 +208,22 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
 
             // Always use UTC+8
             let query_time = Utc::now().with_timezone(&FixedOffset::east(3600 * 8));
+            println!("Query time: {}", query_time);
 
             let mut status_string = format!("As of {},", query_time.format("%H:%M:%S").to_string());
             if result.status().is_success() {
+                println!("Successful status code {}", result.status());
                 match sais_client_mutex.can_login().await {
                     Ok(did_succeed) => {
                         let status_message;
                         if did_succeed {
                             status_message = MessageBuilder::new()
                                 .push("UP SAIS is up! ")
-                                // :pepeOK:
                                 .emoji(&emojis.get(&EmojiId(747129612081037403)).unwrap())
                                 .build();
                         } else {
                             status_message = MessageBuilder::new()
-                                .push("UP SAIS is up, but could not log in. ")
+                                .push("UP SAIS is up, but there are login problems. ")
                                 .emoji(&emojis.get(&EmojiId(747636237015187616)).unwrap())
                                 .build();
                         }
@@ -226,6 +232,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
                     Err(why) => println!("Could not check login status: {}", why),
                 }
             } else {
+                println!("Unsuccessful status code {}", result.status());
                 let status_message = MessageBuilder::new()
                     .push("UP SAIS is down... ")
                     .emoji(&emojis.get(&EmojiId(746770847506628719)).unwrap())
@@ -235,12 +242,12 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             let _ = msg.reply(ctx, status_string).await;
         }
         Err(why) => {
+            println!("Could not get response: {:?}", why);
             let status_message = MessageBuilder::new()
                 .push("Wala na dili na gyud muload ")
                 .emoji(&emojis.get(&EmojiId(746776416510803978)).unwrap())
                 .build();
             let _ = msg.reply(ctx, status_message);
-            println!("Could not get response: {:?}", why);
         }
     }
 
