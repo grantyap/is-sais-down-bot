@@ -96,6 +96,7 @@ impl SaisClient {
         match response {
             Ok(result) => {
                 let result_text = result.text().await.expect("Could not get response text");
+                println!("\nResponse body:\n{}\n", result_text);
                 if result_text.contains(LOGIN_SUCCESS_TEST_STRING) {
                     println!("Found {:?} in response body.\nLogin success", LOGIN_SUCCESS_TEST_STRING);
                     Ok(true)
