@@ -11,7 +11,7 @@ use serenity::{
     model::{channel::Message, gateway::Ready},
     prelude::*,
 };
-use std::{env, sync::Arc};
+use std::{env, sync::Arc, time::Duration};
 
 const UP_SAIS_LOGIN_URL: &str = "https://sais.up.edu.ph/psp/ps/?cmd=login&languageCd=ENG";
 
@@ -54,7 +54,10 @@ impl TypeMapKey for SaisClientContainer {
 impl SaisClient {
     fn new() -> SaisClient {
         SaisClient {
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap(),
             login_details: get_login_details(),
             cookies: String::new(),
         }
@@ -168,7 +171,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     println!("Checking SAIS at '{}'", UP_SAIS_LOGIN_URL);
     let _ = msg
         .channel_id
-        .say(&ctx.http, "Let me check...")
+        .say(&ctx.http, "Let me check... :thinking:")
         .await
         .expect("Could not send message");
 
@@ -210,6 +213,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             let _ = msg.reply(ctx, status_string).await;
         }
         Err(why) => {
+            let _ = msg.reply(ctx, "It took too long to get a response. :FeelsBadMan:");
             println!("Could not get response: {:?}", why);
         }
     }
