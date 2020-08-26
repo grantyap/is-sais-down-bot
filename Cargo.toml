@@ -1,5 +1,5 @@
 [package]
-name = "rs-up-sais-checker"
+name = "is-sais-down-bot"
 version = "0.1.0"
 authors = ["Grant Yap <grantivanyap@yahoo.com>"]
 edition = "2018"

@@ -536,6 +536,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47be2f14c678be2fdcab04ab1171db51b2762ce6f0a8ee87c8dd4a04ed216135"
 
 [[package]]
+name = "is-sais-down-bot"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "ron",
+ "serde",
+ "serenity",
+ "tokio",
+]
+
+[[package]]
 name = "itoa"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -975,18 +987,6 @@ dependencies = [
  "base64 0.12.3",
  "bitflags",
  "serde",
-]
-
-[[package]]
-name = "rs-up-sais-checker"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "reqwest",
- "ron",
- "serde",
- "serenity",
- "tokio",
 ]
 
 [[package]]
