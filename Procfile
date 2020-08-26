@@ -1,1 +1,1 @@
-worker: ./target/release/rs-up-sais-checker
+worker: ./target/release/is-sais-down-bot
