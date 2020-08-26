@@ -199,7 +199,9 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             // Get initial cookies for login.
             sais_client_mutex.save_cookies_from_response(&result).await;
 
-            let query_time = Local::now();
+            // Always use UTC+8
+            let query_time = Utc::now().with_timezone(&FixedOffset::east(3600 * 8));
+
             let mut status_string = format!("As of {}", query_time.format("%H:%M:%S").to_string());
             if result.status().is_success() {
                 match sais_client_mutex.can_login().await {
