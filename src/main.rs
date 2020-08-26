@@ -1,22 +1,19 @@
 // Authored by: Grant :^)
 
 use chrono::prelude::*;
-use ron::de::from_reader;
 use serde::Deserialize;
 use serenity::{
     async_trait,
     framework::standard::{
-        CommandError,
         macros::{command, group},
-        StandardFramework,
+        CommandError, StandardFramework,
     },
     model::{channel::Message, gateway::Ready},
     prelude::*,
 };
-use std::{env, fs::File, sync::Arc};
+use std::{env, sync::Arc};
 
 const UP_SAIS_LOGIN_URL: &str = "https://sais.up.edu.ph/psp/ps/?cmd=login&languageCd=ENG";
-const LOGIN_CONFIG_FILEPATH: &str = "config/login.ron";
 
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
@@ -28,8 +25,18 @@ struct LoginDetails {
 }
 
 fn get_login_details() -> LoginDetails {
-    let file = File::open(LOGIN_CONFIG_FILEPATH).expect("Unable to open file");
-    from_reader(file).expect("Could not parse file")
+    LoginDetails {
+        timezoneOffset: env::var("TIMEZONE_OFFSET")
+            .expect("Expected TIMEZONE_OFFSET")
+            .parse::<i32>()
+            .expect("Could not parse TIMEZONE_OFFSET"),
+        userid: env::var("USER_ID").expect("Expected USER_ID"),
+        pwd: env::var("PASSWORD").expect("Expected PASSWORD"),
+        request_id: env::var("REQUEST_ID")
+            .expect("Expected REQUEST_ID")
+            .parse::<u64>()
+            .expect("Could not parse REQUEST_ID"),
+    }
 }
 
 struct SaisClient {
