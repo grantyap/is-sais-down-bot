@@ -100,6 +100,9 @@ impl SaisClient {
                 if result_text.contains(LOGIN_SUCCESS_TEST_STRING) {
                     println!("Found {:?} in response body.\nLogin success", LOGIN_SUCCESS_TEST_STRING);
                     Ok(true)
+                } else if result_text.contains("Your UP Email ID and/or Password are invalid.") {
+                    println!("Login credentials are invalid");
+                    Ok(false)
                 } else {
                     println!("Could not find {:?} in response body", LOGIN_SUCCESS_TEST_STRING);
                     Ok(false)
@@ -205,6 +208,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     match response {
         Ok(result) => {
             // Get initial cookies for login.
+            sais_client_mutex.cookies = String::new();
             sais_client_mutex.save_cookies_from_response(&result).await;
 
             // Always use UTC+8
