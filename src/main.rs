@@ -8,8 +8,9 @@ use serenity::{
         macros::{command, group},
         CommandError, StandardFramework,
     },
-    model::{channel::Message, gateway::Ready},
+    model::{channel::Message, gateway::Ready, id::EmojiId},
     prelude::*,
+    utils::MessageBuilder,
 };
 use std::{env, sync::Arc, time::Duration};
 
@@ -185,6 +186,13 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     };
     let mut sais_client_mutex = sais_client_container.lock().await;
 
+    let emojis = &ctx
+        .http
+        .get_guild(746697859818061844)
+        .await
+        .expect("Could not get guild")
+        .emojis;
+
     let response = sais_client_mutex.get_response().await;
     match response {
         Ok(result) => {
@@ -196,19 +204,28 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             if result.status().is_success() {
                 match sais_client_mutex.can_login().await {
                     Ok(did_succeed) => {
+                        let status_message;
                         if did_succeed {
-                            status_string = format!("{}, UP SAIS is up! :pepeOK:", status_string);
+                            status_message = MessageBuilder::new()
+                                .push("UP SAIS is up! ")
+                                .emoji(&emojis.get(&EmojiId(747129612081037403)).unwrap())
+                                .build();
                         } else {
-                            status_string = format!(
-                                "{}, UP SAIS is up, but could not log in. :panik:",
-                                status_string
-                            );
+                            status_message = MessageBuilder::new()
+                                .push("UP SAIS is up, but could not log in. ")
+                                .emoji(&emojis.get(&EmojiId(747636237015187616)).unwrap())
+                                .build();
                         }
+                        status_string = format!("{} {}", status_string, status_message);
                     }
                     Err(why) => println!("Could not check login status: {}", why),
                 }
             } else {
-                status_string = format!("{}, UP SAIS is down... :MikeSully:", status_string);
+                let status_message = MessageBuilder::new()
+                    .push("UP SAIS is down... ")
+                    .emoji(&emojis.get(&EmojiId(746770847506628719)).unwrap())
+                    .build();
+                status_string = format!("{} {}", status_string, status_message);
             }
             let _ = msg.reply(ctx, status_string).await;
         }
