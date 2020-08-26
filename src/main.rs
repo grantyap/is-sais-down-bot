@@ -139,6 +139,7 @@ async fn main() {
 
     let framework = StandardFramework::new()
         .configure(|c| c.with_whitespace(true).prefix("&"))
+        .bucket("sais", |b| b.delay(5)).await
         .group(&GENERAL_GROUP);
 
     // Create a new instance of the Client, logging in as a bot. This will
@@ -168,6 +169,7 @@ async fn main() {
 struct General;
 
 #[command]
+#[bucket = "sais"]
 async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     println!("Checking SAIS at '{}'", UP_SAIS_LOGIN_URL);
     let _ = msg
