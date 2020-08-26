@@ -202,7 +202,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             // Always use UTC+8
             let query_time = Utc::now().with_timezone(&FixedOffset::east(3600 * 8));
 
-            let mut status_string = format!("As of {}", query_time.format("%H:%M:%S").to_string());
+            let mut status_string = format!("As of {},", query_time.format("%H:%M:%S").to_string());
             if result.status().is_success() {
                 match sais_client_mutex.can_login().await {
                     Ok(did_succeed) => {
@@ -210,6 +210,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
                         if did_succeed {
                             status_message = MessageBuilder::new()
                                 .push("UP SAIS is up! ")
+                                // :pepeOK:
                                 .emoji(&emojis.get(&EmojiId(747129612081037403)).unwrap())
                                 .build();
                         } else {
@@ -232,7 +233,11 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             let _ = msg.reply(ctx, status_string).await;
         }
         Err(why) => {
-            let _ = msg.reply(ctx, "It took too long to get a response. :FeelsBadMan:");
+            let status_message = MessageBuilder::new()
+                .push("Wala na dili na gyud muload ")
+                .emoji(&emojis.get(&EmojiId(746776416510803978)).unwrap())
+                .build();
+            let _ = msg.reply(ctx, status_message);
             println!("Could not get response: {:?}", why);
         }
     }
