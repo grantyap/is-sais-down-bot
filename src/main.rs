@@ -164,11 +164,13 @@ async fn main() {
 struct General;
 
 #[command]
-async fn sais(
-    ctx: &Context,
-    msg: &Message,
-) -> Result<(), CommandError> {
+async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     println!("Checking SAIS at '{}'", UP_SAIS_LOGIN_URL);
+    let _ = msg
+        .channel_id
+        .say(&ctx.http, "Let me check...")
+        .await
+        .expect("Could not send message");
 
     let mut data = ctx.data.write().await;
     let sais_client_container = match data.get_mut::<SaisClientContainer>() {
