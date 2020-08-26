@@ -1,1 +1,1 @@
-web: ./target/release/rs-up-sais-checker
+worker: ./target/release/rs-up-sais-checker
