@@ -248,7 +248,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
                 .push("Wala na dili na gyud muload ")
                 .emoji(&emojis.get(&EmojiId(746776416510803978)).unwrap())
                 .build();
-            let _ = msg.reply(ctx, status_message);
+            let _ = msg.reply(ctx, status_message).await;
         }
     }
 
