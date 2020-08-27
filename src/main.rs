@@ -208,7 +208,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     match response {
         Ok(result) => {
             // Get initial cookies for login.
-            sais_client_mutex.cookies = String::new();
+            sais_client_mutex.cookies.clear();
             sais_client_mutex.save_cookies_from_response(&result).await;
 
             // Always use UTC+8
