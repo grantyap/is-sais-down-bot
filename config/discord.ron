@@ -1,0 +1,9 @@
+(
+    up_cebu_discord_server_id: 746697859818061844,
+    emoji_ids: {
+        "login_ok": 747129612081037403,
+        "login_fail": 747636237015187616,
+        "status_code_fail": 746770847506628719,
+        "response_fail": 746770847305302106,
+    }
+)

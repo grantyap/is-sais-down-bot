@@ -12,13 +12,12 @@ use serenity::{
     prelude::*,
     utils::MessageBuilder,
 };
-use std::{env, sync::Arc, time::Duration};
+use std::{env, fs::File, io::prelude::*, sync::Arc, time::Duration};
 
-const UP_SAIS_LOGIN_URL: &str = "https://sais.up.edu.ph/psp/ps/?cmd=login&languageCd=ENG";
-const UP_CEBU_DISCORD_SERVER_ID: u64 = 746697859818061844;
-const LOGIN_SUCCESS_TEST_STRING: &str = "<title>Employee-facing registry content</title>";
+const SAIS_CONFIG_FILEPATH: &str = "config/sais.ron";
+const DISCORD_CONFIG_FILEPATH: &str = "config/discord.ron";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 #[allow(non_snake_case)]
 struct LoginDetails {
     timezoneOffset: i32,
@@ -27,22 +26,58 @@ struct LoginDetails {
     request_id: u64,
 }
 
-fn get_login_details() -> LoginDetails {
-    LoginDetails {
-        timezoneOffset: env::var("TIMEZONE_OFFSET")
-            .expect("Expected TIMEZONE_OFFSET")
-            .parse::<i32>()
-            .expect("Could not parse TIMEZONE_OFFSET"),
-        userid: env::var("USER_ID").expect("Expected USER_ID"),
-        pwd: env::var("PASSWORD").expect("Expected PASSWORD"),
-        request_id: env::var("REQUEST_ID")
-            .expect("Expected REQUEST_ID")
-            .parse::<u64>()
-            .expect("Could not parse REQUEST_ID"),
+impl LoginDetails {
+    fn get() -> Self {
+        LoginDetails {
+            timezoneOffset: env::var("TIMEZONE_OFFSET")
+                .expect("Expected TIMEZONE_OFFSET")
+                .parse::<i32>()
+                .expect("Could not parse TIMEZONE_OFFSET"),
+            userid: env::var("USER_ID").expect("Expected USER_ID"),
+            pwd: env::var("PASSWORD").expect("Expected PASSWORD"),
+            request_id: env::var("REQUEST_ID")
+                .expect("Expected REQUEST_ID")
+                .parse::<u64>()
+                .expect("Could not parse REQUEST_ID"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SaisConfig {
+    login_url: String,
+    login_success_string: String,
+}
+
+impl SaisConfig {
+    fn get() -> Result<SaisConfig, Box<dyn std::error::Error>> {
+        let sais_config_file = File::open(SAIS_CONFIG_FILEPATH)?;
+        let mut buf_reader = std::io::BufReader::new(sais_config_file);
+        let mut contents = String::new();
+        buf_reader.read_to_string(&mut contents)?;
+        Ok(ron::de::from_str(&contents)?)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscordConfig {
+    up_cebu_discord_server_id: u64,
+    emoji_ids: std::collections::HashMap<String, u64>,
+}
+
+impl DiscordConfig {
+    fn get() -> Result<DiscordConfig, Box<dyn std::error::Error>> {
+        let discord_config_file = File::open(DISCORD_CONFIG_FILEPATH)?;
+        let mut buf_reader = std::io::BufReader::new(discord_config_file);
+        let mut contents = String::new();
+        buf_reader.read_to_string(&mut contents)?;
+        Ok(ron::de::from_str(&contents)?)
     }
 }
 
 struct SaisClient {
+    sais_config: SaisConfig,
+    discord_config: DiscordConfig,
     http_client: reqwest::Client,
     login_details: LoginDetails,
     cookies: String,
@@ -57,24 +92,25 @@ impl TypeMapKey for SaisClientContainer {
 impl SaisClient {
     fn new() -> SaisClient {
         SaisClient {
+            sais_config: SaisConfig::get().expect("Could not get SaisConfig"),
+            discord_config: DiscordConfig::get().expect("Could not get DiscordConfig"),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap(),
-            login_details: get_login_details(),
+            login_details: LoginDetails::get(),
             cookies: String::new(),
         }
     }
 
-    async fn get_response(&self) -> Result<reqwest::Response, Box<dyn std::error::Error + Send>> {
-        let response = self.http_client.get(UP_SAIS_LOGIN_URL).send().await;
-        match response {
-            Ok(result) => Ok(result),
-            Err(why) => Err(Box::new(why)),
-        }
+    async fn get_response(&self) -> Result<reqwest::Response, impl std::error::Error> {
+        self.http_client
+            .get(&self.sais_config.login_url)
+            .send()
+            .await
     }
 
-    async fn can_login(&self) -> Result<bool, Box<dyn std::error::Error + Send>> {
+    async fn can_login(&self) -> Result<bool, Box<dyn std::error::Error>> {
         let params = [
             (
                 "timezoneOffset",
@@ -87,28 +123,29 @@ impl SaisClient {
 
         let response = self
             .http_client
-            .post(UP_SAIS_LOGIN_URL)
+            .post(&self.sais_config.login_url)
             .form(&params)
             .header(reqwest::header::USER_AGENT, "Is UP SAIS down?/1.0")
             .header(reqwest::header::COOKIE, &self.cookies)
             .send()
-            .await;
-        match response {
-            Ok(result) => {
-                let result_text = result.text().await.expect("Could not get response text");
-                println!("\nResponse body:\n{}\n", result_text);
-                if result_text.contains(LOGIN_SUCCESS_TEST_STRING) {
-                    println!("Found {:?} in response body.\nLogin success", LOGIN_SUCCESS_TEST_STRING);
-                    Ok(true)
-                } else if result_text.contains("Your UP Email ID and/or Password are invalid.") {
-                    println!("Login credentials are invalid");
-                    Ok(false)
-                } else {
-                    println!("Could not find {:?} in response body", LOGIN_SUCCESS_TEST_STRING);
-                    Ok(false)
-                }
-            }
-            Err(why) => Err(Box::new(why)),
+            .await?;
+
+        let result_text = response.text().await?;
+        if result_text.contains(&self.sais_config.login_success_string) {
+            println!(
+                "Found {:?} in response body.\nLogin success",
+                &self.sais_config.login_success_string
+            );
+            Ok(true)
+        } else if result_text.contains("Your UP Email ID and/or Password are invalid.") {
+            println!("Login credentials are invalid");
+            Ok(false)
+        } else {
+            println!(
+                "Could not find {:?} in response body",
+                &self.sais_config.login_success_string
+            );
+            Ok(false)
         }
     }
 
@@ -176,12 +213,10 @@ struct General;
 #[command]
 #[bucket = "sais"]
 async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
-    println!("Checking SAIS at '{}'", UP_SAIS_LOGIN_URL);
     let _ = msg
         .channel_id
         .say(&ctx.http, "Let me check... :thinking:")
-        .await
-        .expect("Could not send message");
+        .await?;
 
     let mut data = ctx.data.write().await;
     let sais_client_container = match data.get_mut::<SaisClientContainer>() {
@@ -193,11 +228,15 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     };
     let mut sais_client_mutex = sais_client_container.lock().await;
 
+    println!(
+        "Checking SAIS at '{}'",
+        &sais_client_mutex.sais_config.login_url
+    );
+
     let emojis = &ctx
         .http
-        .get_guild(UP_CEBU_DISCORD_SERVER_ID)
-        .await
-        .expect("Could not get guild")
+        .get_guild(sais_client_mutex.discord_config.up_cebu_discord_server_id)
+        .await?
         .emojis;
 
     let response = sais_client_mutex.get_response().await;
@@ -207,8 +246,7 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             sais_client_mutex.cookies.clear();
             sais_client_mutex.save_cookies_from_response(&result).await;
 
-            // Always use UTC+8
-            let query_time = Utc::now().with_timezone(&FixedOffset::east(3600 * 8));
+            let query_time = current_time_utc_plus_8();
             println!("Query time: {}", query_time);
 
             let mut status_string = format!("As of {},", query_time.format("%H:%M:%S").to_string());
@@ -220,12 +258,32 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
                         if did_succeed {
                             status_message = MessageBuilder::new()
                                 .push("UP SAIS is up! ")
-                                .emoji(&emojis.get(&EmojiId(747129612081037403)).unwrap())
+                                .emoji(
+                                    &emojis
+                                        .get(&EmojiId(
+                                            *sais_client_mutex
+                                                .discord_config
+                                                .emoji_ids
+                                                .get("login_ok")
+                                                .unwrap(),
+                                        ))
+                                        .unwrap(),
+                                )
                                 .build();
                         } else {
                             status_message = MessageBuilder::new()
                                 .push("UP SAIS is up, but there are login problems. ")
-                                .emoji(&emojis.get(&EmojiId(747636237015187616)).unwrap())
+                                .emoji(
+                                    &emojis
+                                        .get(&EmojiId(
+                                            *sais_client_mutex
+                                                .discord_config
+                                                .emoji_ids
+                                                .get("login_fail")
+                                                .unwrap(),
+                                        ))
+                                        .unwrap(),
+                                )
                                 .build();
                         }
                         status_string = format!("{} {}", status_string, status_message);
@@ -236,7 +294,17 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
                 println!("Unsuccessful status code {}", result.status());
                 let status_message = MessageBuilder::new()
                     .push("UP SAIS is down... ")
-                    .emoji(&emojis.get(&EmojiId(746770847506628719)).unwrap())
+                    .emoji(
+                        &emojis
+                            .get(&EmojiId(
+                                *sais_client_mutex
+                                    .discord_config
+                                    .emoji_ids
+                                    .get("status_code_fail")
+                                    .unwrap(),
+                            ))
+                            .unwrap(),
+                    )
                     .build();
                 status_string = format!("{} {}", status_string, status_message);
             }
@@ -246,11 +314,26 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
             println!("Could not get response: {:?}", why);
             let status_message = MessageBuilder::new()
                 .push("Wala na dili na gyud muload ")
-                .emoji(&emojis.get(&EmojiId(746776416510803978)).unwrap())
+                .emoji(
+                    &emojis
+                        .get(&EmojiId(
+                            *sais_client_mutex
+                                .discord_config
+                                .emoji_ids
+                                .get("response_fail")
+                                .unwrap(),
+                        ))
+                        .unwrap(),
+                )
                 .build();
-            let _ = msg.reply(ctx, status_message);
+            let _ = msg.reply(ctx, status_message).await;
         }
     }
 
     Ok(())
+}
+
+fn current_time_utc_plus_8() -> DateTime<FixedOffset> {
+    let utc_plus_8_offset = &chrono::FixedOffset::east(3600 * 8);
+    Utc::now().with_timezone(utc_plus_8_offset)
 }
