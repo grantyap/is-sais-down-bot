@@ -1,0 +1,4 @@
+(
+    login_url: "https://sais.up.edu.ph/psp/ps/?cmd=login&languageCd=ENG",
+    login_success_string: "<title>Employee-facing registry content</title>",
+)
