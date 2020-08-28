@@ -110,7 +110,7 @@ impl SaisClient {
             .await
     }
 
-    async fn can_login(&self) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn can_login(&self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let params = [
             (
                 "timezoneOffset",
@@ -156,6 +156,10 @@ impl SaisClient {
             self.cookies = format!("{};{}", self.cookies, cookie.to_str().unwrap().to_string());
         }
     }
+
+    fn clear_cookies(&mut self) {
+        self.cookies.clear();
+    }
 }
 
 struct Handler;
@@ -192,9 +196,11 @@ async fn main() {
         .framework(framework)
         .await
         .expect("Err creating client");
+
+    let sais_client_container = Arc::new(Mutex::new(SaisClient::new()));
     {
         let mut data = client.data.write().await;
-        data.insert::<SaisClientContainer>(Arc::new(Mutex::new(SaisClient::new())));
+        data.insert::<SaisClientContainer>(Arc::clone(&sais_client_container));
     }
 
     // Finally, start a single shard, and start listening to events.
@@ -219,116 +225,105 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
         .await?;
 
     let mut data = ctx.data.write().await;
-    let sais_client_container = match data.get_mut::<SaisClientContainer>() {
-        Some(v) => v,
+    let mut sais_client = match data.get_mut::<SaisClientContainer>() {
+        Some(v) => v.lock().await,
         None => {
             let _ = msg.reply(ctx, "Could not get the SAIS client.").await;
             return Ok(());
         }
     };
-    let mut sais_client_mutex = sais_client_container.lock().await;
 
-    println!(
-        "Checking SAIS at '{}'",
-        &sais_client_mutex.sais_config.login_url
-    );
+    println!("Checking SAIS at '{}'", &sais_client.sais_config.login_url);
 
     let emojis = &ctx
         .http
-        .get_guild(sais_client_mutex.discord_config.up_cebu_discord_server_id)
+        .get_guild(sais_client.discord_config.up_cebu_discord_server_id)
         .await?
         .emojis;
 
-    let response = sais_client_mutex.get_response().await;
-    match response {
-        Ok(result) => {
-            // Get initial cookies for login.
-            sais_client_mutex.cookies.clear();
-            sais_client_mutex.save_cookies_from_response(&result).await;
+    let mut reply_message = MessageBuilder::new();
+    let query_time_string = current_time_utc_plus_8().format("%H:%M:%S").to_string();
+    reply_message
+        .push("As of ")
+        .push(query_time_string)
+        .push(", ");
 
-            let query_time = current_time_utc_plus_8();
-            println!("Query time: {}", query_time);
+    let response = sais_client.get_response().await;
+    if let Err(why) = response {
+        println!("Could not get response: {:?}", why);
+        reply_message.push("dili na gyud muload ").emoji(
+            &emojis
+                .get(&EmojiId(
+                    *sais_client
+                        .discord_config
+                        .emoji_ids
+                        .get("response_fail")
+                        .unwrap(),
+                ))
+                .unwrap(),
+        );
+        let _ = msg.reply(ctx, reply_message.build()).await;
+        return Ok(());
+    }
+    println!("Got a response");
 
-            let mut status_string = format!("As of {},", query_time.format("%H:%M:%S").to_string());
-            if result.status().is_success() {
-                println!("Successful status code {}", result.status());
-                match sais_client_mutex.can_login().await {
-                    Ok(did_succeed) => {
-                        let status_message;
-                        if did_succeed {
-                            status_message = MessageBuilder::new()
-                                .push("UP SAIS is up! ")
-                                .emoji(
-                                    &emojis
-                                        .get(&EmojiId(
-                                            *sais_client_mutex
-                                                .discord_config
-                                                .emoji_ids
-                                                .get("login_ok")
-                                                .unwrap(),
-                                        ))
-                                        .unwrap(),
-                                )
-                                .build();
-                        } else {
-                            status_message = MessageBuilder::new()
-                                .push("UP SAIS is up, but there are login problems. ")
-                                .emoji(
-                                    &emojis
-                                        .get(&EmojiId(
-                                            *sais_client_mutex
-                                                .discord_config
-                                                .emoji_ids
-                                                .get("login_fail")
-                                                .unwrap(),
-                                        ))
-                                        .unwrap(),
-                                )
-                                .build();
-                        }
-                        status_string = format!("{} {}", status_string, status_message);
-                    }
-                    Err(why) => println!("Could not check login status: {}", why),
-                }
-            } else {
-                println!("Unsuccessful status code {}", result.status());
-                let status_message = MessageBuilder::new()
-                    .push("UP SAIS is down... ")
-                    .emoji(
-                        &emojis
-                            .get(&EmojiId(
-                                *sais_client_mutex
-                                    .discord_config
-                                    .emoji_ids
-                                    .get("status_code_fail")
-                                    .unwrap(),
-                            ))
-                            .unwrap(),
-                    )
-                    .build();
-                status_string = format!("{} {}", status_string, status_message);
-            }
-            let _ = msg.reply(ctx, status_string).await;
-        }
-        Err(why) => {
-            println!("Could not get response: {:?}", why);
-            let status_message = MessageBuilder::new()
-                .push("Wala na dili na gyud muload ")
-                .emoji(
+    let response = response.unwrap();
+    if !response.status().is_success() {
+        println!("Unsuccessful status code {:?}", response.status());
+        reply_message.push("UP SAIS is down... ").emoji(
+            &emojis
+                .get(&EmojiId(
+                    *sais_client
+                        .discord_config
+                        .emoji_ids
+                        .get("status_code_fail")
+                        .unwrap(),
+                ))
+                .unwrap(),
+        );
+        let _ = msg.reply(ctx, reply_message.build()).await;
+        return Ok(());
+    }
+    println!("Successful status code {:?}", response.status());
+
+    sais_client.clear_cookies();
+    sais_client.save_cookies_from_response(&response).await;
+
+    match sais_client.can_login().await {
+        Ok(did_succeed) => {
+            if did_succeed {
+                reply_message.push("UP SAIS is up! ").emoji(
                     &emojis
                         .get(&EmojiId(
-                            *sais_client_mutex
+                            *sais_client
                                 .discord_config
                                 .emoji_ids
-                                .get("response_fail")
+                                .get("login_ok")
                                 .unwrap(),
                         ))
                         .unwrap(),
-                )
-                .build();
-            let _ = msg.reply(ctx, status_message).await;
+                );
+            } else {
+                reply_message
+                    .push("UP SAIS is up, but there are login problems. ")
+                    .emoji(
+                        &emojis
+                            .get(&EmojiId(
+                                *sais_client
+                                    .discord_config
+                                    .emoji_ids
+                                    .get("login_fail")
+                                    .unwrap(),
+                            ))
+                            .unwrap(),
+                    );
+            }
+        }
+        Err(why) => {
+            return Err(why);
         }
     }
+    let _ = msg.reply(ctx, reply_message.build()).await;
 
     Ok(())
 }
