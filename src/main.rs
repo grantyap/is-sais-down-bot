@@ -6,13 +6,13 @@ use serenity::{
     async_trait,
     framework::standard::{
         macros::{command, group},
-        CommandError, StandardFramework,
+        CommandResult, StandardFramework,
     },
     model::{channel::Message, gateway::Ready, id::EmojiId},
     prelude::*,
     utils::MessageBuilder,
 };
-use std::{env, fs::File, io::prelude::*, sync::Arc, time::Duration};
+use std::{collections::HashMap, env, fs::File, io::prelude::*, sync::Arc, time::Duration};
 
 const SAIS_CONFIG_FILEPATH: &str = "config/sais.ron";
 const DISCORD_CONFIG_FILEPATH: &str = "config/discord.ron";
@@ -62,7 +62,7 @@ impl SaisConfig {
 #[derive(Debug, Deserialize)]
 struct DiscordConfig {
     up_cebu_discord_server_id: u64,
-    emoji_ids: std::collections::HashMap<String, u64>,
+    emoji_ids: HashMap<String, u64>,
 }
 
 impl DiscordConfig {
@@ -77,7 +77,6 @@ impl DiscordConfig {
 
 struct SaisClient {
     sais_config: SaisConfig,
-    discord_config: DiscordConfig,
     http_client: reqwest::Client,
     login_details: LoginDetails,
     cookies: String,
@@ -93,7 +92,6 @@ impl SaisClient {
     fn new() -> SaisClient {
         SaisClient {
             sais_config: SaisConfig::get().expect("Could not get SaisConfig"),
-            discord_config: DiscordConfig::get().expect("Could not get DiscordConfig"),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
@@ -162,6 +160,16 @@ impl SaisClient {
     }
 }
 
+// TODO: Put EmojiCache inside of SaisClient. I don't know a way to keep
+//       the emojis in a separate store. Having two separate stores accessed
+//       by one context's data seems to upset the compiler.
+//       Alternatively, I can figure out a way to deal with the RwLock.
+struct EmojiCache;
+
+impl TypeMapKey for EmojiCache {
+    type Value = HashMap<String, serenity::model::guild::Emoji>;
+}
+
 struct Handler;
 
 #[async_trait]
@@ -172,8 +180,33 @@ impl EventHandler for Handler {
     // private channels, and more.
     //
     // In this case, just print what the current user's username is.
-    async fn ready(&self, _: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+
+        let mut data = ctx.data.write().await;
+        let emoji_cache = data
+            .get_mut::<EmojiCache>()
+            .expect("Could not get EmojiCache");
+
+        let discord_config = DiscordConfig::get().expect("Could not get DiscordConfig");
+        let server_emojis = &ctx
+            .http
+            .get_guild(discord_config.up_cebu_discord_server_id)
+            .await
+            .expect("Could not get Discord server")
+            .emojis;
+
+        for (k, v) in discord_config.emoji_ids {
+            emoji_cache.insert(
+                k,
+                server_emojis
+                    .get(&EmojiId(v))
+                    .expect(&format!("Could not find emoji with ID {:?}", v))
+                    .clone(),
+            );
+        }
+
+        println!("Cached server emojis");
     }
 }
 
@@ -201,6 +234,7 @@ async fn main() {
     {
         let mut data = client.data.write().await;
         data.insert::<SaisClientContainer>(Arc::clone(&sais_client_container));
+        data.insert::<EmojiCache>(HashMap::default());
     }
 
     // Finally, start a single shard, and start listening to events.
@@ -218,7 +252,7 @@ struct General;
 
 #[command]
 #[bucket = "sais"]
-async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
+async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
     let _ = msg
         .channel_id
         .say(&ctx.http, "Let me check... :thinking:")
@@ -235,12 +269,6 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
 
     println!("Checking SAIS at '{}'", &sais_client.sais_config.login_url);
 
-    let emojis = &ctx
-        .http
-        .get_guild(sais_client.discord_config.up_cebu_discord_server_id)
-        .await?
-        .emojis;
-
     let mut reply_message = MessageBuilder::new();
     let query_time_string = current_time_utc_plus_8().format("%H:%M:%S").to_string();
     reply_message
@@ -251,17 +279,9 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     let response = sais_client.get_response().await;
     if let Err(why) = response {
         println!("Could not get response: {:?}", why);
-        reply_message.push("dili na gyud muload ").emoji(
-            &emojis
-                .get(&EmojiId(
-                    *sais_client
-                        .discord_config
-                        .emoji_ids
-                        .get("response_fail")
-                        .unwrap(),
-                ))
-                .unwrap(),
-        );
+        reply_message
+            .push("dili na gyud muload ")
+            .emoji(emoji_cache.get("response_fail").unwrap());
         let _ = msg.reply(ctx, reply_message.build()).await;
         return Ok(());
     }
@@ -270,17 +290,9 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     let response = response.unwrap();
     if !response.status().is_success() {
         println!("Unsuccessful status code {:?}", response.status());
-        reply_message.push("UP SAIS is down... ").emoji(
-            &emojis
-                .get(&EmojiId(
-                    *sais_client
-                        .discord_config
-                        .emoji_ids
-                        .get("status_code_fail")
-                        .unwrap(),
-                ))
-                .unwrap(),
-        );
+        reply_message
+            .push("UP SAIS is down... ")
+            .emoji(emoji_cache.get("status_code_fail").unwrap());
         let _ = msg.reply(ctx, reply_message.build()).await;
         return Ok(());
     }
@@ -292,31 +304,13 @@ async fn sais(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
     match sais_client.can_login().await {
         Ok(did_succeed) => {
             if did_succeed {
-                reply_message.push("UP SAIS is up! ").emoji(
-                    &emojis
-                        .get(&EmojiId(
-                            *sais_client
-                                .discord_config
-                                .emoji_ids
-                                .get("login_ok")
-                                .unwrap(),
-                        ))
-                        .unwrap(),
-                );
+                reply_message
+                    .push("UP SAIS is up! ")
+                    .emoji(emoji_cache.get("login_ok").unwrap());
             } else {
                 reply_message
                     .push("UP SAIS is up, but there are login problems. ")
-                    .emoji(
-                        &emojis
-                            .get(&EmojiId(
-                                *sais_client
-                                    .discord_config
-                                    .emoji_ids
-                                    .get("login_fail")
-                                    .unwrap(),
-                            ))
-                            .unwrap(),
-                    );
+                    .emoji(emoji_cache.get("login_fail").unwrap());
             }
         }
         Err(why) => {
