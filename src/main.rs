@@ -80,6 +80,7 @@ struct SaisClient {
     http_client: reqwest::Client,
     login_details: LoginDetails,
     cookies: String,
+    emoji_cache: HashMap<String, serenity::model::guild::Emoji>,
 }
 
 struct SaisClientContainer;
@@ -98,6 +99,7 @@ impl SaisClient {
                 .unwrap(),
             login_details: LoginDetails::get(),
             cookies: String::new(),
+            emoji_cache: HashMap::default(),
         }
     }
 
@@ -160,16 +162,6 @@ impl SaisClient {
     }
 }
 
-// TODO: Put EmojiCache inside of SaisClient. I don't know a way to keep
-//       the emojis in a separate store. Having two separate stores accessed
-//       by one context's data seems to upset the compiler.
-//       Alternatively, I can figure out a way to deal with the RwLock.
-struct EmojiCache;
-
-impl TypeMapKey for EmojiCache {
-    type Value = HashMap<String, serenity::model::guild::Emoji>;
-}
-
 struct Handler;
 
 #[async_trait]
@@ -184,9 +176,11 @@ impl EventHandler for Handler {
         println!("{} is connected!", ready.user.name);
 
         let mut data = ctx.data.write().await;
-        let emoji_cache = data
-            .get_mut::<EmojiCache>()
-            .expect("Could not get EmojiCache");
+        let mut sais_client = data
+            .get_mut::<SaisClientContainer>()
+            .expect("Could not get SaisClientContainer")
+            .lock()
+            .await;
 
         let discord_config = DiscordConfig::get().expect("Could not get DiscordConfig");
         let server_emojis = &ctx
@@ -197,7 +191,7 @@ impl EventHandler for Handler {
             .emojis;
 
         for (k, v) in discord_config.emoji_ids {
-            emoji_cache.insert(
+            sais_client.emoji_cache.insert(
                 k,
                 server_emojis
                     .get(&EmojiId(v))
@@ -234,7 +228,6 @@ async fn main() {
     {
         let mut data = client.data.write().await;
         data.insert::<SaisClientContainer>(Arc::clone(&sais_client_container));
-        data.insert::<EmojiCache>(HashMap::default());
     }
 
     // Finally, start a single shard, and start listening to events.
@@ -281,7 +274,7 @@ async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
         println!("Could not get response: {:?}", why);
         reply_message
             .push("dili na gyud muload ")
-            .emoji(emoji_cache.get("response_fail").unwrap());
+            .emoji(sais_client.emoji_cache.get("response_fail").unwrap());
         let _ = msg.reply(ctx, reply_message.build()).await;
         return Ok(());
     }
@@ -292,7 +285,7 @@ async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
         println!("Unsuccessful status code {:?}", response.status());
         reply_message
             .push("UP SAIS is down... ")
-            .emoji(emoji_cache.get("status_code_fail").unwrap());
+            .emoji(sais_client.emoji_cache.get("status_code_fail").unwrap());
         let _ = msg.reply(ctx, reply_message.build()).await;
         return Ok(());
     }
@@ -306,11 +299,11 @@ async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
             if did_succeed {
                 reply_message
                     .push("UP SAIS is up! ")
-                    .emoji(emoji_cache.get("login_ok").unwrap());
+                    .emoji(sais_client.emoji_cache.get("login_ok").unwrap());
             } else {
                 reply_message
                     .push("UP SAIS is up, but there are login problems. ")
-                    .emoji(emoji_cache.get("login_fail").unwrap());
+                    .emoji(sais_client.emoji_cache.get("login_fail").unwrap());
             }
         }
         Err(why) => {
