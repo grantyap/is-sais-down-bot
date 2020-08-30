@@ -153,7 +153,7 @@ impl SaisClient {
         let set_cookie_iter = response.headers().get_all(reqwest::header::SET_COOKIE);
 
         for cookie in set_cookie_iter {
-            self.cookies = format!("{};{}", self.cookies, cookie.to_str().unwrap().to_string());
+            self.cookies = format!("{};{}", self.cookies, cookie.to_str().unwrap());
         }
     }
 
