@@ -293,6 +293,11 @@ async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
 
     sais_client.clear_cookies();
     sais_client.save_cookies_from_response(&response).await;
+    println!(
+        "Cookies size: {:?}, capacity: {:?}",
+        sais_client.cookies.len(),
+        sais_client.cookies.capacity()
+    );
 
     match sais_client.can_login().await {
         Ok(did_succeed) => {
