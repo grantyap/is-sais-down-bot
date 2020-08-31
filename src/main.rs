@@ -3,7 +3,6 @@
 use chrono::prelude::*;
 use serde::Deserialize;
 use serenity::{
-    async_trait,
     framework::standard::{
         macros::{command, group},
         CommandResult, StandardFramework,
@@ -77,7 +76,7 @@ impl DiscordConfig {
 
 struct SaisClient {
     sais_config: SaisConfig,
-    http_client: reqwest::Client,
+    http_client: reqwest::blocking::Client,
     login_details: LoginDetails,
     cookies: String,
     emoji_cache: HashMap<String, serenity::model::guild::Emoji>,
@@ -93,7 +92,7 @@ impl SaisClient {
     fn new() -> SaisClient {
         SaisClient {
             sais_config: SaisConfig::get().expect("Could not get SaisConfig"),
-            http_client: reqwest::Client::builder()
+            http_client: reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap(),
@@ -103,14 +102,11 @@ impl SaisClient {
         }
     }
 
-    async fn get_response(&self) -> Result<reqwest::Response, impl std::error::Error> {
-        self.http_client
-            .get(&self.sais_config.login_url)
-            .send()
-            .await
+    fn get_response(&self) -> Result<reqwest::blocking::Response, impl std::error::Error> {
+        self.http_client.get(&self.sais_config.login_url).send()
     }
 
-    async fn can_login(&self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    fn can_login(&self) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let params = [
             (
                 "timezoneOffset",
@@ -127,10 +123,9 @@ impl SaisClient {
             .form(&params)
             .header(reqwest::header::USER_AGENT, "Is UP SAIS down?/1.0")
             .header(reqwest::header::COOKIE, &self.cookies)
-            .send()
-            .await?;
+            .send()?;
 
-        let result_text = response.text().await?;
+        let result_text = response.text()?;
         if result_text.contains(&self.sais_config.login_success_string) {
             println!(
                 "Found {:?} in response body.\nLogin success",
@@ -149,7 +144,7 @@ impl SaisClient {
         }
     }
 
-    async fn save_cookies_from_response(&mut self, response: &reqwest::Response) {
+    fn save_cookies_from_response(&mut self, response: &reqwest::blocking::Response) {
         let set_cookie_iter = response.headers().get_all(reqwest::header::SET_COOKIE);
 
         for cookie in set_cookie_iter {
@@ -164,7 +159,6 @@ impl SaisClient {
 
 struct Handler;
 
-#[async_trait]
 impl EventHandler for Handler {
     // Set a handler to be called on the `ready` event. This is called when a
     // shard is booted, and a READY payload is sent by Discord. This payload
@@ -172,21 +166,18 @@ impl EventHandler for Handler {
     // private channels, and more.
     //
     // In this case, just print what the current user's username is.
-    async fn ready(&self, ctx: Context, ready: Ready) {
+    fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
 
-        let mut data = ctx.data.write().await;
+        let discord_config = DiscordConfig::get().expect("Could not get DiscordConfig");
+        let mut data = ctx.data.write();
         let mut sais_client = data
             .get_mut::<SaisClientContainer>()
             .expect("Could not get SaisClientContainer")
-            .lock()
-            .await;
-
-        let discord_config = DiscordConfig::get().expect("Could not get DiscordConfig");
+            .lock();
         let server_emojis = &ctx
             .http
             .get_guild(discord_config.up_cebu_discord_server_id)
-            .await
             .expect("Could not get Discord server")
             .emojis;
 
@@ -204,29 +195,24 @@ impl EventHandler for Handler {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // Configure the client with your Discord bot token in the environment.
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
     let framework = StandardFramework::new()
         .configure(|c| c.with_whitespace(true).prefix("&"))
         .bucket("sais", |b| b.delay(5))
-        .await
         .group(&GENERAL_GROUP);
 
     // Create a new instance of the Client, logging in as a bot. This will
     // automatically prepend your bot token with "Bot ", which is a requirement
     // by Discord for bot users.
-    let mut client = serenity::Client::new(&token)
-        .event_handler(Handler)
-        .framework(framework)
-        .await
-        .expect("Err creating client");
+    let mut client = serenity::Client::new(&token, Handler).expect("Error creating client");
+    client.with_framework(framework);
 
     let sais_client_container = Arc::new(Mutex::new(SaisClient::new()));
     {
-        let mut data = client.data.write().await;
+        let mut data = client.data.write();
         data.insert::<SaisClientContainer>(Arc::clone(&sais_client_container));
     }
 
@@ -234,7 +220,7 @@ async fn main() {
     //
     // Shards will automatically attempt to reconnect, and will perform
     // exponential backoff until it reconnects.
-    if let Err(why) = client.start().await {
+    if let Err(why) = client.start() {
         println!("Client error: {:?}", why);
     }
 }
@@ -245,17 +231,14 @@ struct General;
 
 #[command]
 #[bucket = "sais"]
-async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
-    let _ = msg
-        .channel_id
-        .say(&ctx.http, "Let me check... :thinking:")
-        .await?;
+fn sais(ctx: &mut Context, msg: &Message) -> CommandResult {
+    let _ = msg.channel_id.say(&ctx.http, "Let me check... :thinking:");
 
-    let mut data = ctx.data.write().await;
+    let mut data = ctx.data.write();
     let mut sais_client = match data.get_mut::<SaisClientContainer>() {
-        Some(v) => v.lock().await,
+        Some(v) => v.lock(),
         None => {
-            let _ = msg.reply(ctx, "Could not get the SAIS client.").await;
+            let _ = msg.reply(&ctx, "Could not get the SAIS client.");
             return Ok(());
         }
     };
@@ -269,13 +252,13 @@ async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
         .push(query_time_string)
         .push(", ");
 
-    let response = sais_client.get_response().await;
+    let response = sais_client.get_response();
     if let Err(why) = response {
         println!("Could not get response: {:?}", why);
         reply_message
             .push("dili na gyud muload ")
             .emoji(sais_client.emoji_cache.get("response_fail").unwrap());
-        let _ = msg.reply(ctx, reply_message.build()).await;
+        let _ = msg.reply(&ctx, reply_message.build());
         return Ok(());
     }
     println!("Got a response");
@@ -286,20 +269,20 @@ async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
         reply_message
             .push("UP SAIS is down... ")
             .emoji(sais_client.emoji_cache.get("status_code_fail").unwrap());
-        let _ = msg.reply(ctx, reply_message.build()).await;
+        let _ = msg.reply(&ctx, reply_message.build());
         return Ok(());
     }
     println!("Successful status code {:?}", response.status());
 
     sais_client.clear_cookies();
-    sais_client.save_cookies_from_response(&response).await;
+    sais_client.save_cookies_from_response(&response);
     println!(
         "Cookies size: {:?}, capacity: {:?}",
         sais_client.cookies.len(),
         sais_client.cookies.capacity()
     );
 
-    match sais_client.can_login().await {
+    match sais_client.can_login() {
         Ok(did_succeed) => {
             if did_succeed {
                 reply_message
@@ -312,10 +295,10 @@ async fn sais(ctx: &Context, msg: &Message) -> CommandResult {
             }
         }
         Err(why) => {
-            return Err(why);
+            return Err(why.into());
         }
     }
-    let _ = msg.reply(ctx, reply_message.build()).await;
+    let _ = msg.reply(&ctx, reply_message.build());
 
     Ok(())
 }
